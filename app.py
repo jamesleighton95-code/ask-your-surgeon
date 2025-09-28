@@ -30,15 +30,34 @@ def build_retriever(file_paths):
     db = FAISS.from_documents(docs, embeddings)
     return db.as_retriever()
 
+from langchain.prompts import PromptTemplate
+from langchain.chains import ConversationalRetrievalChain
+
 @st.cache_resource
 def load_chat_chain(retriever):
-    """Builds a conversational chain with memory."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    # Patient-friendly prompt
+    qa_prompt = PromptTemplate(
+        input_variables=["context", "question"],
+        template=(
+            "You are a helpful urology consultant.\n"
+            "Answer the patient's question clearly and kindly, using simple, patient-friendly language.\n"
+            "Avoid jargon unless absolutely necessary. If you use a medical term, explain it.\n"
+            "Base your answer only on the following trusted guideline context:\n\n"
+            "{context}\n\n"
+            "Patient's question: {question}\n\n"
+            "Final answer (friendly, clear, concise):"
+        )
+    )
+
     return ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=retriever,
-        return_source_documents=True
+        return_source_documents=True,
+        combine_docs_chain_kwargs={"prompt": qa_prompt}
     )
+
 
 st.title("Ask Your Surgeon")
 st.write("Understand your diagnosis, know your options, decide your treatment.")
