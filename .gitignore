@@ -16,9 +16,9 @@ data/raw/
 # Keep cleaned text for FAISS building
 !data/clean/*.txt
 
-
-# Embeddings (too large for GitHub, rebuild on deploy instead)
+# Embeddings (too large, rebuild on deploy)
 embeddings/
 
 # Secrets
 *.env
+
