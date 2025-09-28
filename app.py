@@ -1,16 +1,14 @@
 import streamlit as st
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.docstore.document import Document
+from langchain.chains import RetrievalQA
 
 # Map conditions to multiple guideline sources
 CONDITIONS = {
     "Prostate Cancer": [
         "data/clean/EAU_Prostate_Cancer_chunks.txt",
         "data/clean/Prostate_Cancer_UK_New_Diagnosis_chunks.txt",
-        # Later you can add more:
-        # "data/clean/NICE_Prostate_Cancer_chunks.txt",
-        # "data/clean/BAUS_Prostate_Cancer_chunks.txt",
     ]
 }
 
@@ -34,19 +32,34 @@ def build_retriever(file_paths):
     db = FAISS.from_documents(docs, embeddings)
     return db.as_retriever()
 
+@st.cache_resource
+def load_qa_chain(retriever):
+    """Builds a RetrievalQA chain using GPT and the retriever."""
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        retriever=retriever,
+        return_source_documents=True
+    )
+    return qa_chain
+
 st.title("Ask Your Surgeon")
 st.write("Understand your diagnosis, know your options, decide your treatment.")
 
-# Patient selects their condition
+# Patient selects condition
 condition_choice = st.selectbox("Select your condition:", list(CONDITIONS.keys()))
 
 retriever = build_retriever(CONDITIONS[condition_choice])
+qa_chain = load_qa_chain(retriever)
 
 query = st.text_input("Ask a question about your condition:")
 if query:
-    results = retriever.get_relevant_documents(query)
-    st.subheader("Results")
-    for r in results:
-        st.write(r.page_content)
-        st.caption(f"Source: {r.metadata.get('source', 'Unknown')}")
+    response = qa_chain.invoke({"query": query})
+    
+    st.subheader("Answer")
+    st.write(response["result"])
+
+    st.subheader("Sources")
+    for doc in response["source_documents"]:
+        st.caption(f"- {doc.metadata.get('source', 'Unknown')}")
 
