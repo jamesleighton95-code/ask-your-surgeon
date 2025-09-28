@@ -1,17 +1,18 @@
+import sys
 import pdfplumber
 
-input_pdf = "data/raw/EAU_Prostate_Cancer.pdf"
-output_txt = "data/clean/EAU_Prostate_Cancer.txt"
+if len(sys.argv) != 3:
+    print("Usage: python convert_one.py input.pdf output.txt")
+    sys.exit(1)
+
+input_pdf = sys.argv[1]
+output_txt = sys.argv[2]
 
 with pdfplumber.open(input_pdf) as pdf:
-    text = ""
-    for page in pdf.pages:
-        page_text = page.extract_text()
-        if page_text:   # skip blank pages
-            text += page_text + "\n"
+    text = "\n".join([page.extract_text() or "" for page in pdf.pages])
 
 with open(output_txt, "w", encoding="utf-8") as f:
     f.write(text)
 
-print(f"✅ Done! Saved text to {output_txt}")
+print(f"✅ Converted {input_pdf} -> {output_txt}")
 

@@ -10,9 +10,12 @@ __pycache__/
 # OS junk
 .DS_Store
 
-# Local data (don’t upload patient data or raw guideline PDFs)
+# Local raw PDFs (do not upload patient or guideline PDFs)
 data/raw/
-data/clean/
+
+# Keep cleaned text for FAISS building
+!data/clean/*.txt
+
 
 # Embeddings (too large for GitHub, rebuild on deploy instead)
 embeddings/

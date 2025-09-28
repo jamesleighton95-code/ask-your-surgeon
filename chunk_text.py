@@ -1,32 +1,30 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-import tiktoken
+import sys
 
-# Input: your cleaned guideline
-input_file = "data/clean/EAU_Prostate_Cancer_cleaned.txt"
-output_file = "data/clean/EAU_Prostate_Cancer_chunks.txt"
+if len(sys.argv) != 3:
+    print("Usage: python chunk_text.py input.txt output.txt")
+    sys.exit(1)
 
-# Load text
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+
+chunk_size = 1000  # characters per chunk
+overlap = 200      # overlap between chunks
+
 with open(input_file, "r", encoding="utf-8") as f:
-    raw_text = f.read()
+    text = f.read()
 
-# Token counter (so chunks are ~1000 tokens each)
-encoding = tiktoken.encoding_for_model("gpt-4o-mini")  # works for GPT models
-def tok_len(text): return len(encoding.encode(text))
+chunks = []
+start = 0
+while start < len(text):
+    end = start + chunk_size
+    chunk = text[start:end]
+    if chunk.strip():  # only keep non-empty
+        chunks.append(chunk)
+    start = end - overlap  # step forward with overlap
 
-# Splitter: 1000-token chunks with 200-token overlap
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200,
-    length_function=tok_len
-)
-
-chunks = splitter.split_text(raw_text)
-
-# Save chunks into a file
 with open(output_file, "w", encoding="utf-8") as f:
     for i, chunk in enumerate(chunks, 1):
-        f.write(f"--- Chunk {i} ---\n")
-        f.write(chunk + "\n\n")
+        f.write(f"--- Chunk {i} ---\n{chunk}\n")
 
-print(f"✅ Done! Created {len(chunks)} chunks and saved to {output_file}")
+print(f"✅ Chunked {input_file} into {len(chunks)} chunks -> {output_file}")
 
