@@ -1,25 +1,12 @@
-# Virtual environment
-venv/
-.DS_Store
-
-# Python cache
+# Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# OS junk
-.DS_Store
-
-# Local raw PDFs (do not upload patient or guideline PDFs)
-data/raw/
-
-# Keep cleaned text for FAISS building
-!data/clean/*.txt
-
-# Embeddings (too large, rebuild on deploy)
-embeddings/
+venv/
 
 # Secrets
-*.env
+.env
+
+# Large data
+data/
+embeddings/
 
