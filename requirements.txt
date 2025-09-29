@@ -1,8 +1,14 @@
-streamlit
-openai
+# Core packages
 langchain
 langchain-community
 langchain-openai
+openai
 faiss-cpu
 pypdf
+
+# Web app
+streamlit
+
+# Utilities
+tiktoken
 
