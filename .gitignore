@@ -1,12 +1,5 @@
-# Python
+.DS_Store
+*.log
+chat_log.txt
 __pycache__/
 *.pyc
-venv/
-
-# Secrets
-.env
-
-# Large data
-data/
-embeddings/
-
