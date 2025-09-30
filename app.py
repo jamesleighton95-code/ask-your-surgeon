@@ -1,27 +1,46 @@
-# app.py
 import streamlit as st
-from chatbot import qa_chain
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain_openai import OpenAI
+from master_slave_validator import load_specialties, ask_chatbot, MASTER_TEMPLATE
 
-st.set_page_config(page_title="Ask Your Surgeon", page_icon="💬")
-st.title("💬 Ask Your Surgeon Chatbot")
+# ----------------------
+# Streamlit UI
+# ----------------------
 
-st.write(
-    "Ask questions about prostate cancer. "
-    "Answers are simplified for patients and based on trusted guidelines (EAU, Prostate Cancer UK)."
-)
+st.set_page_config(page_title="Ask Your Surgeon – Urology Chatbot", layout="wide")
 
-query = st.text_input("Your question:")
+st.title("💬 Ask Your Surgeon – Urology Chatbot")
+st.write("This chatbot provides information based on trusted sources (EAU, BAUS, PCUK).")
 
-if query:
-    result = qa_chain(query)
-    answer = result.get("result", "")
-    sources = result.get("source_documents", [])
+# Cache the bot so it doesn't reload every time
+@st.cache_resource
+def load_bot():
+    slaves = load_specialties()  # ✅ defaults to "embeddings/"
+    master_chain = LLMChain(
+        llm=OpenAI(temperature=0),
+        prompt=PromptTemplate.from_template(MASTER_TEMPLATE)
+    )
+    return slaves, master_chain
 
-    st.markdown("### ✅ Answer")
-    st.write(answer)
+slaves, master_chain = load_bot()
 
-    if sources:
-        st.markdown("### 📖 Sources")
-        for doc in sources:
-            st.write(f"- {doc.metadata.get('source', 'Unknown source')}")
+# Input box
+user_query = st.text_input("Ask me about your urological condition:")
+
+if user_query:
+    with st.spinner("Consultant is thinking..."):
+        answer = ask_chatbot(
+            user_query,
+            slaves,
+            master_chain,
+            debug=True  # set False to hide debug info
+        )
+    st.markdown(answer)
+
+    # Optional: Debug info (toggle on demand)
+    with st.expander("🔎 Debug info"):
+        st.write("This section shows retrieved chunks, verdicts, and raw outputs for debugging.")
+        # In the current implementation, ask_chatbot already prints debug info to console.
+        # If you want to capture and show it here, you'd need to adjust ask_chatbot to return it.
 

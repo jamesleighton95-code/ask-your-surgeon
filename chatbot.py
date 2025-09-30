@@ -39,3 +39,20 @@ qa_chain = RetrievalQA.from_chain_type(
     return_source_documents=True,
 )
 
+import os
+
+SOURCE_MAP = {
+    "EAU_Prostate_Cancer_chunks.txt": "EAU Prostate Cancer Guidelines",
+    "Prostate_Cancer_UK_chunks.txt": "Prostate Cancer UK – New Diagnosis Guide",
+}
+}
+
+def format_sources(sources):
+    """Convert raw source metadata into human-friendly names."""
+    pretty_sources = []
+    for doc in sources:
+        source = doc.metadata.get("source", "Unknown source")
+        name = os.path.basename(source)
+        pretty_sources.append(SOURCE_MAP.get(name, name))
+    return pretty_sources
+
