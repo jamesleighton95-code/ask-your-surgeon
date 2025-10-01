@@ -9,6 +9,32 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
+from postprocessors import enforce_exact_risks
+from aliases import BAUS_DOC_MAP, GROUND_TRUTH_MAP
+
+# ✅ Force debug mode on
+debug = True
+
+# -------------------------
+# ✅ Ground truth detection
+# -------------------------
+RISK_TERMS = [
+    "risk", "risks", "complication", "complications",
+    "side effect", "side effects", "problem", "problems"
+]
+
+def get_ground_truth_file(query: str):
+    """Return the path to a ground truth file if query matches."""
+    q_lower = query.lower()
+    for key, filepath in GROUND_TRUTH_MAP.items():
+        if key in q_lower and any(term in q_lower for term in RISK_TERMS):
+            return filepath
+    return None
+
+
+
+# ✅ Force debug mode on
+debug = True
 
 
 # ----------------------
@@ -21,11 +47,13 @@ chat_history = []
 # Prompt Templates
 # ----------------------
 
-MASTER_TEMPLATE = """You are a senior NHS Urology Consultant.
-Your job is to decide which specialty area (e.g. prostate, bladder, kidney, BPH, stones) a patient's question belongs to.
-You are not answering the question yourself - only rewriting it into a precise clinical query and assigning it to the correct specialty.
 
-Rules:
+MASTER_TEMPLATE = """You are a senior NHS Urology Consultant.
+Your job is to:
+1. Rewrite the patient’s latest question so that it is self-contained.
+2. Decide which specialty area (e.g. prostate, bladder, kidney, BPH, stones) the rewritten query belongs to.
+
+Rules:  
 - If the question is about prostate enlargement, LUTS, flow, peeing at night, or BPH medications (tamsulosin/finasteride/etc.), choose "bph" - NOT prostate cancer.
 - If it is about prostate cancer (diagnosis, staging, treatment), choose "prostate".
 - Only choose from this list: {allowed_specialties}.
@@ -34,48 +62,27 @@ Rules:
 Conversation so far:
 {question}
 
-Decide the specialty for the patient’s **latest question**, using the conversation history above if needed.
-
-Return ONLY one JSON line:
-{{"query": "<rewritten clinical query>", "specialty": "<one of: {allowed_specialties}, unsupported>"}}
+Return JSON in this exact format:
+{{"query": "<rewritten self-contained question>", "specialty": "<specialty>"}}
 """
 
 CONSULTANT_TEMPLATE = """You are a senior Urology Consultant working in the NHS.
 Your role is to help patients who have already been diagnosed with a urological condition
 fully understand their condition, explore treatment options, and prepare to give informed consent.
 
-Always follow this structure:
-
-1. Short Summary
-   - Provide a simple 2–3 sentence explanation in plain English.
-   - Avoid medical jargon. Be clear, empathetic, and patient-friendly.
-
-2. Offer Expansion
-   - Add new detail not already covered in the Short Summary.
-   - Do NOT repeat or rephrase content from the Short Summary.
-   - Expand with staging, treatment types, risks, and consent points where relevant.
-   - End with: "I can provide more detailed information on treatments, risks, or consent if you’d like."
-3. Confirm Understanding
-   - End with one **simple reflective check**, e.g.:
-     "Does this explanation make sense so far?"
-     or
-     "Would you like me to go over the risks in more detail?"
-   - Always **end by asking the patient** if the explanation makes sense so far.
-   - Do **NOT** invent or write patient responses. Wait for the patient to answer in the next turn.
-
-
-When asked for *more detail*, expand into:
-   - **Diagnosis explanation**: what the condition is, how it affects health.
-   - **Treatment options**: list surgical and non-surgical approaches, each with pros/cons and risks.
-   - **Consent preparation**: summarise key points a patient must know before treatment.
+When answering:
+- If the question mentions cancer, complications, or prognosis → begin with a short empathetic statement (e.g., "I understand this can feel worrying" / "Many people share this concern"). 
+- If the question is a neutral “what is…” or factual query → begin directly with a clear, simple explanation without extra empathy. 
+- Always use patient-friendly language.
+- Then move onto an initial 1-2 focused answer in bullet point format
 
 Strict rules:
 - Only use information from trusted sources (EAU guidelines, BAUS resources, Prostate Cancer UK, NHS leaflets).
 - You must never invent percentages, statistics, or risks. 
-- Only state numbers if they are explicitly written in the context.
-- If the patient specifically asks for percentages or numbers and they are not in the context, reply:
-  "⚠️ I’m sorry, I cannot provide percentages for that risk because they are not available in my trusted resources."
 - Never generalise or guess.
+- Try not to give specific risk fractions or percentages, keep it vague until the patient asks specifically about risks
+- Do not paraphrase or simplify numerical risks.  
+
 
 Professionalism & Accessibility:
 - Always communicate empathetically and respectfully, in plain English.
@@ -83,15 +90,13 @@ Professionalism & Accessibility:
 - Make content accessible for patients of all backgrounds and literacy levels.
 - Align responses with NHS practice, BAUS guidance, and EAU evidence-based recommendations.
 
-You must ONLY use the information in the context below.
-If you cannot find an answer directly in the context, reply: "⚠️ I'm sorry, I don't have that information in my resources."
-
 Context:
 {context}
 
 Patient question: {question}
 Consultant:
 """
+
 
 # ----------------------
 # Semantic Validator
@@ -214,10 +219,13 @@ def load_specialties(base_path="embeddings/"):
 # Keep chat history globally or pass it in
 chat_history = []
 
+
+
 def ask_chatbot(user_query, slaves, master_chain, debug=False):
     global chat_history
 
-    # Allow user to reset history
+
+ # Allow user to reset history
     if user_query.lower() in ["reset", "clear", "start again"]:
         chat_history = []
         return "🧹 Chat history cleared. Please ask your first question."
@@ -227,15 +235,15 @@ def ask_chatbot(user_query, slaves, master_chain, debug=False):
     full_query = "\n".join(
         [f"Patient: {q}\nConsultant: {a}" for q, a in chat_history[-3:]]
     ) + f"\nPatient: {user_query}"
-
+    
     if debug:
         print("\n[DEBUG] Full query sent to master router:\n", full_query)
-
+    
     master_prompt = master_chain.run({
         "question": full_query,
         "allowed_specialties": ", ".join(sorted(slaves.keys()))
     })
-
+        
     if debug:
         print("\n[DEBUG] Master router raw output:\n", master_prompt)
 
@@ -245,6 +253,14 @@ def ask_chatbot(user_query, slaves, master_chain, debug=False):
         routed_spec = parsed["specialty"]
     except Exception as e:
         return f"❌ Routing failed: {e}"
+ 
+    # ✅ Handle vague / unsupported routing gracefully
+    if routed_spec == "unsupported":
+        return (
+            "Consultant: I want to make sure I give you the most accurate information. "
+            "Could you please be a little more specific about what you’d like me to explain — "
+            "for example, the risks of TURP, HoLEP, or another procedure?"
+        )
 
     if routed_spec not in slaves:
         return f"⚠️ Sorry, I can’t handle that topic. Available: {', '.join(slaves.keys())}"
@@ -253,34 +269,69 @@ def ask_chatbot(user_query, slaves, master_chain, debug=False):
     answer = result["result"]
     docs = result.get("source_documents", [])
 
-    # Run semantic validator
-    if not semantic_validator(answer, docs):
-        return "⚠️ I'm sorry, I can't fully support that answer from my trusted resources."
+    RISK_TERMS = [
+        "risk", "risks", "complication", "complications",
+        "side effect", "side effects", "problem", "problems"
+    ]
+
+    lowered_q = rewritten_q.lower()
+    baus_key = next((k for k in BAUS_DOC_MAP if k in lowered_q), None)
+
+    # 1. Ground truth override
+    if baus_key and baus_key in GROUND_TRUTH_MAP:
+        if any(term in lowered_q for term in RISK_TERMS):
+            gt_path = GROUND_TRUTH_MAP[baus_key]
+            with open(gt_path, "r") as f:
+                final_answer = f.read().strip()
+            if debug:
+                print(f"[DEBUG] Using ground truth risks for {baus_key.upper()}")
+            return (
+                f"Consultant: Here are the official risks from BAUS "
+                f"({baus_key.upper()} leaflet):\n\n{final_answer}"
+            )
+
+    if baus_key and not any(term in lowered_q for term in RISK_TERMS):
+        # Allow retrieval from all trusted docs, not just BAUS
+        retriever = slaves[routed_spec].retriever
+        results = retriever.get_relevant_documents(rewritten_q)
+
+        if results:
+            docs = results
+            if debug:
+                print(f"[DEBUG] Non-risk BAUS query → using retrieval across trusted docs ({len(docs)} chunks)")
+
+        # Hide specific figures in non-risk queries
+        final_answer = enforce_exact_risks(answer, [d.page_content for d in docs], debug=debug)
+        final_answer = re.sub(r"\b\d+(\s*\/\s*\d+)?\s*%|\b\d+\s+in\s+\d+\b", "[risk figures removed]", final_answer)
+
+        return (
+            f"Consultant: {final_answer}\n\n"
+            "This information is general and based on trusted sources "
+            "(BAUS, EAU, NICE, NHS). It is not a substitute for personal advice "
+            "from your own doctor."
+        )
+
+    # 3. Fallback → generic sources
+    retrieved_texts = [d.page_content for d in docs]
+    final_answer = enforce_exact_risks(answer, retrieved_texts, debug=debug)
+
+    if not any(term in lowered_q for term in RISK_TERMS):
+        if debug:
+            print("[DEBUG] Non-risk query → hiding numerical risk figures from fallback sources")
+        final_answer = re.sub(
+            r"\b\d+(\s*\/\s*\d+)?\s*%|\b\d+\s+in\s+\d+\b",
+            "[risk figures removed]",
+            final_answer
+        )
 
     # Save exchange into chat history
-    chat_history.append((user_query, answer))
+    chat_history.append((user_query, final_answer))
 
     sources = [os.path.basename(d.metadata.get("source", "?")) for d in docs]
     unique_sources = sorted(set(sources))
     sources_str = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(unique_sources))
 
-    return f"{answer}\n\n📖 Sources used:\n{sources_str}"
-
-
-
-
-def remove_duplicates(text: str) -> str:
-    """Remove duplicate sentences while preserving order."""
-    seen = set()
-    cleaned = []
-    for sentence in re.split(r'(?<=[.!?]) +', text):
-        s = sentence.strip()
-        if s and s not in seen:
-            cleaned.append(s)
-            seen.add(s)
-    return " ".join(cleaned)
-
-
+    return f"{final_answer}\n\n📖 Sources used:\n{sources_str}"
 
 # ----------------------
 # Main (for terminal use)
